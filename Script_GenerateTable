@@ -1,0 +1,67 @@
+# -*- coding: utf-8 -*-
+import win32com.client
+from win32com.client import Dispatch, gencache
+
+def change_table_dimensions(sh, gl, vs):
+    """
+    Функция подключается к открытой 3D-модели в КОМПАС-3D
+    и меняет параметры: Sh (ширина), Gl (глубина), Vs (высота).
+    """
+    # 1. Подключаемся к API7 КОМПАС-3D
+    kompas_api7_module = gencache.EnsureModule(
+        "{69AC2981-37C0-4379-84FD-5DD2F3C0A520}", 0, 1, 0
+    )
+    application = kompas_api7_module.IApplication(
+        Dispatch("Kompas.Application.7")
+    )
+
+    # 2. Получаем активный документ и его главный компонент
+    active_doc = application.ActiveDocument
+    if not active_doc:
+        print("Ошибка: В КОМПАС-3D не открыт ни один документ!")
+        return False
+
+    doc3d = kompas_api7_module.IKompasDocument3D(active_doc)
+    top_part = doc3d.TopPart
+
+    # 3. Добираемся до внутренних переменных сборки
+    feature7 = kompas_api7_module.IFeature7(top_part)
+    vars_obj = feature7.Variables(False, False)
+
+    if not vars_obj:
+        print("Ошибка: Переменные в модели не найдены!")
+        return False
+
+    # Словарь новых значений
+    new_vars = {
+        "Sh": str(sh),
+        "Gl": str(gl),
+        "Vs": str(vs)
+    }
+
+    # 4. Переписываем выражения для найденных переменных
+    changed = False
+    for v in vars_obj:
+        if v.Name in new_vars:
+            v.Expression = new_vars[v.Name]
+            #print(f"Изменено выражение {v.Name} -> {v.Expression}")
+            changed = True
+
+    # 5. Перестраиваем модель в КОМПАСе
+    if changed:
+        doc3d.RebuildDocument()
+        print("3D-модель успешно перестроена!")
+        return True
+
+    return False
+
+
+# --- ТОЧКА ВХОДА (ТЕСТ) ---
+if __name__ == "__main__":
+    # Задайте нужные размеры (Ширина, Глубина, Высота в мм):
+    NEW_SH = 800
+    NEW_GL = 1200
+    NEW_VS = 850
+
+    # Запуск изменения
+    change_table_dimensions(NEW_SH, NEW_GL, NEW_VS)
