@@ -2,24 +2,27 @@
 import win32com.client
 from win32com.client import Dispatch, gencache
 
-def set_part_variables(file_path, new_values):
-    """
-    file_path: путь к .m3d детали
-    new_values: dict {"ИмяПеременной": значение}
-    """
-    kompas_api7_module = gencache.EnsureModule(
-        "{69AC2981-37C0-4379-84FD-5DD2F3C0A520}", 0, 1, 0
-    )
+
+def _as_variable_list(vars_obj):
+    """Variables(False, False) возвращает кортеж, если переменных больше одной,
+    но отдаёт сам объект IVariable7 напрямую, если переменная всего одна."""
+    if hasattr(vars_obj, "Name"):
+        return [vars_obj]
+    return list(vars_obj)
+
+
+def _get_app(kompas_api7_module):
     application = kompas_api7_module.IApplication(
         Dispatch("Kompas.Application.7")
     )
-    application.HideMessage = 1  # ksHideMessageYes — авто-подтверждение диалогов
+    return application
 
+
+def set_part_variables(application, kompas_api7_module, file_path, new_values):
     documents = application.Documents
     doc = documents.Open(file_path, False, False)
     if not doc:
-        print(f"Ошибка: не удалось открыть {file_path}")
-        application.HideMessage = 0
+        print("Не удалось открыть деталь: " + file_path)
         return False
 
     doc3d = kompas_api7_module.IKompasDocument3D(doc)
@@ -28,7 +31,7 @@ def set_part_variables(file_path, new_values):
     vars_obj = feature7.Variables(False, False)
 
     changed = False
-    for v in vars_obj:
+    for v in _as_variable_list(vars_obj):
         if v.Name in new_values:
             v.Expression = str(new_values[v.Name])
             changed = True
@@ -38,20 +41,71 @@ def set_part_variables(file_path, new_values):
         doc.Save()
 
     doc.Close(1)
-    application.HideMessage = 0
     return changed
 
 
-def update_parts(sh, gl, vs, top_path, leg_path):
-    ok1 = set_part_variables(top_path, {"Sh": sh, "Gl": gl})
-    ok2 = set_part_variables(leg_path, {"Vs": vs})
-    return ok1 and ok2
+def rebuild_assembly(application, kompas_api7_module, file_path):
+    documents = application.Documents
+    doc = documents.Open(file_path, False, False)
+    if not doc:
+        print("Не удалось открыть сборку: " + file_path)
+        return False
+
+    doc3d = kompas_api7_module.IKompasDocument3D(doc)
+    doc3d.RebuildDocument()
+    doc.Save()
+    doc.Close(1)
+    return True
 
 
-# пример вызова
+def rebuild_drawing(application, kompas_api7_module, file_path):
+    documents = application.Documents
+    doc = documents.Open(file_path, False, False)
+    if not doc:
+        print("Не удалось открыть чертёж: " + file_path)
+        return False
+
+    doc2d = kompas_api7_module.IKompasDocument2D(doc)
+    drawing = kompas_api7_module.IDrawingDocument(doc2d)
+    drawing.RebuildViews(None)
+    doc.Save()
+    doc.Close(1)
+    return True
+
+
+def run_full_update(sh, gl, vs, top_path, leg_path, assembly_path, drawing_paths):
+    kompas_api7_module = gencache.EnsureModule(
+        "{69AC2981-37C0-4379-84FD-5DD2F3C0A520}", 0, 1, 0
+    )
+    application = _get_app(kompas_api7_module)
+    application.HideMessage = 1  # ksHideMessageYes
+
+    try:
+        # 1. Детали
+        set_part_variables(application, kompas_api7_module, top_path, {"Sh": sh, "Gl": gl})
+        set_part_variables(application, kompas_api7_module, leg_path, {"Vs": vs})
+
+        # 2. Сборка
+        rebuild_assembly(application, kompas_api7_module, assembly_path)
+
+        # 3. Чертежи
+        for dp in drawing_paths:
+            rebuild_drawing(application, kompas_api7_module, dp)
+
+    finally:
+        application.HideMessage = 0  # обязательно вернуть
+
+    return True
+
+
 if __name__ == "__main__":
-    update_parts(
-        sh=1200, gl=400, vs=900,
+    run_full_update(
+        sh=1100, gl=400, vs=700,
         top_path=r"D:\Kompas_Automation\model_drawing\СТЛ-01-00.001 - Столешница.m3d",
         leg_path=r"D:\Kompas_Automation\model_drawing\СТЛ-01-00.002 - Ножка.m3d",
+        assembly_path=r"D:\Kompas_Automation\model_drawing\СТЛ-01-00.001 - Стол демо.a3d",
+        drawing_paths=[
+            r"D:\Kompas_Automation\model_drawing\СТЛ-01-00.001 - Стол демо.cdw",
+            r"D:\Kompas_Automation\model_drawing\СТЛ-01-00.001 _ Столешница.cdw",
+        ],
     )
